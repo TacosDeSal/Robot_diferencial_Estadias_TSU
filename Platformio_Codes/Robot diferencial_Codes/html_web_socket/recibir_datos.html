@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Robot Diferencial</title>
+<style>
+  body { font-family: sans-serif; background: #111; color: #eee; padding: 20px; }
+  input, button { font-size: 16px; padding: 8px; margin: 4px; }
+  #status { font-weight: bold; }
+  .conectado { color: #4caf50; }
+  .desconectado { color: #f44336; }
+  .fila { margin: 12px 0; }
+  button { cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h2>Control Robot Diferencial</h2>
+
+<div class="fila">
+  IP del ESP32: <input id="ip" value="192.168.1.141">
+  <button onclick="conectar()">Conectar</button>
+  <span id="status" class="desconectado">Desconectado</span>
+</div>
+
+<div class="fila">
+  <label>Setpoint:</label>
+  <input id="setpoint" type="number" value="0" step="10">
+  <button onclick="enviar('SETPOINT', document.getElementById('setpoint').value)">Enviar</button>
+</div>
+
+<div class="fila">
+  <label>PWM manual:</label>
+  <input id="pwm" type="number" value="0" step="50" min="-4095" max="4095">
+  <button onclick="enviar('PWM', document.getElementById('pwm').value)">Enviar</button>
+</div>
+
+<div class="fila">
+  <label>Motor:</label>
+  <button onclick="enviar('ENABLE', 1)">Habilitar</button>
+  <button onclick="enviar('ENABLE', 0)">Deshabilitar</button>
+</div>
+
+<div class="fila">
+  <em id="log"></em>
+</div>
+
+<script>
+let ws;
+
+function conectar() {
+  const ip = document.getElementById('ip').value;
+  ws = new WebSocket(`ws://${ip}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'Conectado';
+    document.getElementById('status').className = 'conectado';
+  };
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'Desconectado';
+    document.getElementById('status').className = 'desconectado';
+  };
+  ws.onerror = () => {
+    document.getElementById('log').textContent = 'Error de conexión';
+  };
+}
+
+function enviar(clave, valor) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const msg = `${clave}:${valor}`;
+    ws.send(msg);
+    document.getElementById('log').textContent = 'Enviado: ' + msg;
+  } else {
+    alert('No conectado');
+  }
+}
+</script>
+
+</body>
+</html>

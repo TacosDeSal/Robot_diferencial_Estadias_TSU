@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Robot Diferencial</title>
+<style>
+  body { font-family: sans-serif; background: #111; color: #eee; padding: 20px; }
+  input, button { font-size: 16px; padding: 8px; margin: 4px; }
+  #status { font-weight: bold; }
+  .conectado { color: #4caf50; }
+  .desconectado { color: #f44336; }
+  .panel { border: 1px solid #333; padding: 14px; margin: 14px 0; border-radius: 6px; }
+  .motor { margin: 10px 0; }
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 300px;
+    height: 6px;
+    border-radius: 3px;
+    background: #333;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #2196f3;
+    cursor: pointer;
+    margin-top: -5px;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #2196f3;
+    cursor: pointer;
+    border: none;
+  }
+  input[type=range]::-moz-range-track {
+    background: #333;
+    height: 6px;
+    border-radius: 3px;
+  }
+  .stepper {
+    display: inline-flex;
+    flex-direction: column;
+    vertical-align: middle;
+    margin: 4px 2px;
+  }
+  .stepper button {
+    width: 22px;
+    height: 15px;
+    padding: 0;
+    margin: 0;
+    font-size: 9px;
+    line-height: 1;
+    background: #1c1c1c;
+    color: #888;
+    border: 1px solid #333;
+    cursor: pointer;
+  }
+  .stepper button:first-child {
+    border-radius: 3px 3px 0 0;
+    border-bottom: none;
+  }
+  .stepper button:last-child {
+    border-radius: 0 0 3px 3px;
+  }
+  .stepper button:hover {
+    background: #2a2a2a;
+    color: #ccc;
+  }
+  #recibido { background: #000; height: 200px; overflow-y: auto; padding: 8px;
+              font-family: monospace; font-size: 13px; border-radius: 4px; }
+  .msg { padding: 2px 0; }
+  .handshake { color: #4caf50; }
+  .disconnect { color: #f44336; }
+  .ok { color: #2196f3; }
+  .otro { color: #999; }
+</style>
+</head>
+<body>
+
+<h2>Control Robot Diferencial</h2>
+
+<div class="fila">
+  IP del ESP32: <input id="ip" value="148.247.204.53">
+  <button onclick="conectar()">Conectar</button>
+  <span id="status" class="desconectado">Desconectado</span>
+</div>
+
+<div class="panel">
+  <h3>Enviar</h3>
+  <div class="motor">
+    <label>Motor 1 PWM:</label><br>
+    <input id="m1" type="range" min="-4095" max="4095" value="0" step="1"
+           oninput="sliderInput('m1')">
+    <input id="m1num" type="text" inputmode="numeric" value="0" style="width:90px"
+           oninput="numInput('m1')" onblur="numBlur('m1')">
+    <span class="stepper">
+      <button onclick="step('m1', 5)">▲</button>
+      <button onclick="step('m1', -5)">▼</button>
+    </span>
+    <button onclick="enviar('M1', getVal('m1'))">Enviar</button>
+    <button onclick="reset('m1')">Stop</button>
+  </div>
+  <div class="motor">
+    <label>Motor 2 PWM:</label><br>
+    <input id="m2" type="range" min="-4095" max="4095" value="0" step="1"
+           oninput="sliderInput('m2')">
+    <input id="m2num" type="text" inputmode="numeric" value="0" style="width:90px"
+           oninput="numInput('m2')" onblur="numBlur('m2')">
+    <span class="stepper">
+      <button onclick="step('m2', 5)">▲</button>
+      <button onclick="step('m2', -5)">▼</button>
+    </span>
+    <button onclick="enviar('M2', getVal('m2'))">Enviar</button>
+    <button onclick="reset('m2')">Stop</button>
+  </div>
+  <div class="motor">
+    <button onclick="enviarAmbos()">Enviar Ambos</button>
+    <button onclick="stopGeneral()" style="background:#f44336;color:#fff">STOP GENERAL</button>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Recibido</h3>
+  <div id="recibido"></div>
+</div>
+
+<script>
+let ws;
+const MIN = -4095;
+const MAX = 4095;
+
+function conectar() {
+  if (ws) {
+    ws.onclose = null; // evita que dispare el handler viejo al cerrar
+    ws.close();
+  }
+
+  const ip = document.getElementById('ip').value;
+  ws = new WebSocket(`ws://${ip}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'Conectado';
+    document.getElementById('status').className = 'conectado';
+  };
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'Desconectado';
+    document.getElementById('status').className = 'desconectado';
+  };
+  ws.onmessage = (event) => {
+    agregarMensaje(event.data);
+  };
+}
+
+function agregarMensaje(texto) {
+  const div = document.getElementById('recibido');
+  const linea = document.createElement('div');
+  linea.className = 'msg ' + clasificar(texto);
+  const hora = new Date().toLocaleTimeString();
+  linea.textContent = `[${hora}] ${texto}`;
+  div.appendChild(linea);
+  div.scrollTop = div.scrollHeight;
+}
+
+function clasificar(texto) {
+  if (texto.startsWith('HANDSHAKE')) return 'handshake';
+  if (texto.startsWith('DISCONNECT')) return 'disconnect';
+  if (texto.includes('_OK')) return 'ok';
+  return 'otro';
+}
+
+function enviar(clave, valor) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(`${clave}:${valor}`);
+  } else {
+    alert('No conectado');
+  }
+}
+
+// Devuelve el valor entero final (clamp) del campo de texto de un motor
+function getVal(id) {
+  const num = document.getElementById(id + 'num');
+  let v = parseInt(num.value, 10);
+  if (isNaN(v)) v = 0;
+  v = Math.max(MIN, Math.min(MAX, v));
+  return v;
+}
+
+// El usuario mueve el SLIDER -> refleja el valor exacto en el texto
+function sliderInput(id) {
+  const slider = document.getElementById(id);
+  const v = parseInt(slider.value, 10);
+  document.getElementById(id + 'num').value = v;
+  actualizarFill(id, v);
+}
+
+// El usuario escribe en el CAMPO DE TEXTO -> filtra caracteres pero
+// NO fuerza el valor mientras se está escribiendo (permite "-" solo,
+// o vacío momentáneamente) para no bloquear la escritura
+function numInput(id) {
+  const num = document.getElementById(id + 'num');
+
+  // Solo permite dígitos y un signo "-" al inicio
+  let limpio = num.value.replace(/[^0-9-]/g, '');
+  limpio = limpio.replace(/(?!^)-/g, ''); // solo un "-" y solo al inicio
+  if (limpio !== num.value) num.value = limpio;
+
+  // Si ya es un número completo y válido, sincroniza el slider y el relleno
+  // sin tocar lo que el usuario está escribiendo
+  const v = parseInt(limpio, 10);
+  if (!isNaN(limpio) && limpio !== '' && limpio !== '-') {
+    const clamped = Math.max(MIN, Math.min(MAX, v));
+    document.getElementById(id).value = clamped;
+    actualizarFill(id, clamped);
+  }
+}
+
+// Al salir del campo (blur), ahí sí se limpia/clampa el valor final
+function numBlur(id) {
+  const num = document.getElementById(id + 'num');
+  const v = getVal(id);
+  num.value = v;
+  document.getElementById(id).value = v;
+  actualizarFill(id, v);
+}
+
+// Botones +5 / -5: suma o resta al valor actual, con clamp
+function step(id, delta) {
+  const v = Math.max(MIN, Math.min(MAX, getVal(id) + delta));
+  setValor(id, v);
+}
+
+function actualizarFill(id, valor) {
+  const slider = document.getElementById(id);
+  const min = parseFloat(slider.min);
+  const max = parseFloat(slider.max);
+  const centro = 50; // % donde está el 0
+  const pct = ((valor - min) / (max - min)) * 100;
+
+  const inicio = Math.min(centro, pct);
+  const fin = Math.max(centro, pct);
+
+  slider.style.background = `linear-gradient(to right,
+    #333 0%, #333 ${inicio}%,
+    #2196f3 ${inicio}%, #2196f3 ${fin}%,
+    #333 ${fin}%, #333 100%)`;
+}
+
+function enviarAmbos() {
+  const v1 = getVal('m1');
+  const v2 = getVal('m2');
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(`AMBOS:${v1},${v2}`);
+  } else {
+    alert('No conectado');
+  }
+}
+
+function stopGeneral() {
+  // Detiene los motores pero conserva los valores mostrados en pantalla
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send('STOP');
+  } else {
+    alert('No conectado');
+  }
+}
+
+function setValor(id, valor) {
+  document.getElementById(id).value = valor;
+  document.getElementById(id + 'num').value = valor;
+  actualizarFill(id, valor);
+}
+
+function reset(id) {
+  // Solo envía 0 para detener el motor, sin tocar el valor mostrado
+  enviar(id.toUpperCase(), 0);
+}
+
+actualizarFill('m1', 0);
+actualizarFill('m2', 0);
+</script>
+
+</body>
+</html>

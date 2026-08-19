@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Robot Diferencial</title>
+<style>
+  body {
+    background: #121212;
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 30px;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 20px;
+  }
+  .fila {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+  }
+  input {
+    background: #e8e8e8;
+    color: #111;
+    border: none;
+    padding: 6px 10px;
+    font-size: 14px;
+    width: 160px;
+  }
+  button {
+    background: #d9d9d9;
+    color: #111;
+    border: none;
+    padding: 6px 16px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  #estado_conexion {
+    color: #e03030;
+    font-weight: bold;
+  }
+  #estado_conexion.conectado {
+    color: #30c030;
+  }
+</style>
+</head>
+<body>
+
+<h1>Control Robot Diferencial</h1>
+
+<div class="fila">
+  <span>IP del ESP32:</span>
+  <input id="ip_esp32" type="text" value="148.247.204.121">
+  <button id="btn_conectar" onclick="conectar()">Conectar</button>
+  <span id="estado_conexion">Desconectado</span>
+</div>
+
+<div class="fila">
+  <button id="btn_trayectoria" onclick="toggleTrayectoria()" disabled>Iniciar Trayectoria</button>
+</div>
+
+<div class="fila">
+  <span>Motor 1 — Kp:</span>
+  <input id="kp1" type="number" step="2" value="40">
+  <span>Kd:</span>
+  <input id="kd1" type="number" step="0.5" value="2">
+  <button id="btn_pid1" onclick="enviarPID(1)" disabled>Aplicar</button>
+</div>
+
+<div class="fila">
+  <span>Motor 2 — Kp:</span>
+  <input id="kp2" type="number" step="2" value="40">
+  <span>Kd:</span>
+  <input id="kd2" type="number" step="0.5" value="2">
+  <button id="btn_pid2" onclick="enviarPID(2)" disabled>Aplicar</button>
+</div>
+
+<div class="fila">
+  <span>Distancia (m):</span>
+  <input id="distancia" type="number" step="0.1" value="6.57">
+  <button id="btn_dist" onclick="enviarDist()" disabled>Aplicar</button>
+</div>
+
+<div class="fila">
+  <span>Vel. Crucero (m/s):</span>
+  <input id="velcru" type="number" step="0.1" min="0" max="1.445" value="1.0">
+  <small>(máx. 1.445 m/s — motor 200 RPM, 0.435 m/rev)</small>
+  <span>Acel. (m/s²):</span>
+  <input id="acel" type="number" step="0.1" value="1.64">
+  <button id="btn_velacel" onclick="enviarVelAcel()" disabled>Aplicar</button>
+</div>
+
+<script>
+let ws = null;
+
+function conectar() {
+  const ip = document.getElementById("ip_esp32").value.trim();
+  if (ws) ws.close();
+
+  ws = new WebSocket("ws://" + ip + "/ws");
+
+  ws.onopen = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Conectado";
+    estado.classList.add("conectado");
+    document.getElementById("btn_trayectoria").disabled = false;
+    document.getElementById("btn_pid1").disabled = false;
+    document.getElementById("btn_pid2").disabled = false;
+    document.getElementById("btn_dist").disabled = false;
+    document.getElementById("btn_velacel").disabled = false;
+  };
+
+  ws.onclose = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Desconectado";
+    estado.classList.remove("conectado");
+    document.getElementById("btn_trayectoria").disabled = true;
+    document.getElementById("btn_pid1").disabled = true;
+    document.getElementById("btn_pid2").disabled = true;
+    document.getElementById("btn_dist").disabled = true;
+    document.getElementById("btn_velacel").disabled = true;
+  };
+
+  ws.onerror = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Error de conexión";
+    estado.classList.remove("conectado");
+  };
+
+  ws.onmessage = (evt) => {
+    const msg = evt.data;
+    if (msg.startsWith("ESTADO:")) {
+      const activo = msg.split(":")[1] === "1";
+      document.getElementById("btn_trayectoria").textContent =
+        activo ? "Detener Trayectoria" : "Iniciar Trayectoria";
+    }
+    else if (msg.startsWith("PID_M1:")) {
+      const [kp, kd] = msg.substring(7).split(",");
+      document.getElementById("kp1").value = parseFloat(kp).toFixed(2);
+      document.getElementById("kd1").value = parseFloat(kd).toFixed(2);
+    }
+    else if (msg.startsWith("PID_M2:")) {
+      const [kp, kd] = msg.substring(7).split(",");
+      document.getElementById("kp2").value = parseFloat(kp).toFixed(2);
+      document.getElementById("kd2").value = parseFloat(kd).toFixed(2);
+    }
+    else if (msg.startsWith("PARAMS:")) {
+      const [dist, velcru, acel] = msg.substring(7).split(",");
+      document.getElementById("distancia").value = parseFloat(dist).toFixed(2);
+      document.getElementById("velcru").value = parseFloat(velcru).toFixed(2);
+      document.getElementById("acel").value = parseFloat(acel).toFixed(2);
+    }
+  };
+}
+
+function toggleTrayectoria() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send("TOGGLE");
+  }
+}
+
+function enviarPID(motor) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const kp = document.getElementById("kp" + motor).value;
+  const kd = document.getElementById("kd" + motor).value;
+  ws.send("KP" + motor + ":" + kp);
+  ws.send("KD" + motor + ":" + kd);
+}
+
+function enviarDist() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send("DIST:" + document.getElementById("distancia").value);
+}
+
+function enviarVelAcel() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  let velcru = parseFloat(document.getElementById("velcru").value);
+  if (velcru > 1.445) {
+    velcru = 1.445;
+    document.getElementById("velcru").value = velcru;
+  }
+  ws.send("VELCRU:" + velcru);
+  ws.send("ACEL:" + document.getElementById("acel").value);
+}
+</script>
+
+</body>
+</html>

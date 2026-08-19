@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Robot Diferencial</title>
+<style>
+  body {
+    background: #121212;
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 30px;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 20px;
+  }
+  h2 {
+    font-size: 15px;
+    font-weight: bold;
+    margin-top: 30px;
+    margin-bottom: 10px;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .fila {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+    flex-wrap: wrap;
+  }
+  input {
+    background: #e8e8e8;
+    color: #111;
+    border: none;
+    padding: 6px 10px;
+    font-size: 14px;
+    width: 140px;
+  }
+  button {
+    background: #d9d9d9;
+    color: #111;
+    border: none;
+    padding: 6px 16px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  #btn_iniciar {
+    background: transparent;
+    color: #2196f3;
+    border: 1px solid #2196f3;
+  }
+  #btn_detener {
+    background: transparent;
+    color: #e03030;
+    border: 1px solid #e03030;
+  }
+  #estado_conexion {
+    color: #e03030;
+    font-weight: bold;
+  }
+  #estado_conexion.conectado {
+    color: #30c030;
+  }
+  #panel_log {
+    margin-top: 10px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    height: 220px;
+    overflow-y: auto;
+    padding: 10px;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+  }
+  #panel_log div {
+    padding: 2px 0;
+    border-bottom: 1px solid #242424;
+  }
+  #panel_log span.hora {
+    color: #777;
+    margin-right: 8px;
+  }
+  #panel_log span.origen {
+    font-weight: bold;
+    margin-right: 6px;
+  }
+  #panel_log div.cliente span.origen { color: #2196f3; }
+  #panel_log div.esp32   span.origen { color: #30c030; }
+  #panel_log div.conexion span.origen { color: #30c030; }
+  #panel_log div.desconexion span.origen { color: #e03030; }
+</style>
+</head>
+<body>
+
+<h1>Control Robot Diferencial</h1>
+
+<div class="fila">
+  <span>IP del ESP32:</span>
+  <input id="ip_esp32" type="text" value="148.247.204.121">
+  <button id="btn_conectar" onclick="conectar()">Conectar</button>
+  <span id="estado_conexion">Desconectado</span>
+</div>
+
+<h2>Trayectoria</h2>
+<div class="fila">
+  <button id="btn_iniciar" onclick="iniciarTrayectoria()" disabled>Iniciar Trayectoria</button>
+  <button id="btn_detener" onclick="detenerTrayectoria()" disabled>Detener Trayectoria</button>
+</div>
+
+<h2>Configuración</h2>
+<div class="fila">
+  <span>Kp:</span>
+  <input id="kp" type="number" step="2" value="40">
+  <span>Kd:</span>
+  <input id="kd" type="number" step="0.5" value="2">
+</div>
+<div class="fila">
+  <span>Distancia (m):</span>
+  <input id="distancia" type="number" step="0.1" value="6.57">
+</div>
+<div class="fila">
+  <span>Vel. Crucero (m/s):</span>
+  <input id="velcru" type="number" step="0.05" min="0" max="0.7225" value="0.5">
+  <small>(máx. 0.7225 m/s — motor 200 RPM, 0.217 m/rev)</small>
+</div>
+<div class="fila">
+  <span>Acel. (m/s²):</span>
+  <input id="acel" type="number" step="0.1" value="1.64">
+</div>
+<div class="fila">
+  <button id="btn_enviar" onclick="enviarConfiguracion()" disabled>Enviar Configuración</button>
+</div>
+
+<h2>Estado</h2>
+<div id="panel_log"></div>
+
+<script>
+let ws = null;
+
+function log(mensaje, tipo, etiqueta) {
+  const panel = document.getElementById("panel_log");
+  const linea = document.createElement("div");
+  linea.className = tipo || "";
+  const hora = new Date().toLocaleTimeString();
+  let html = '<span class="hora">' + hora + '</span>';
+  if (etiqueta) html += '<span class="origen">' + etiqueta + ':</span>';
+  html += mensaje;
+  linea.innerHTML = html;
+  panel.appendChild(linea);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function setBotonesConectado(activo) {
+  document.getElementById("btn_enviar").disabled = !activo;
+  if (!activo) {
+    document.getElementById("btn_iniciar").disabled = true;
+    document.getElementById("btn_detener").disabled = true;
+  }
+}
+
+function setBotonesTrayectoria(trayectoriaActiva) {
+  document.getElementById("btn_iniciar").disabled = trayectoriaActiva;
+  document.getElementById("btn_detener").disabled = !trayectoriaActiva;
+}
+
+function conectar() {
+  const ip = document.getElementById("ip_esp32").value.trim();
+  if (ws) ws.close();
+
+  log("Conectando a " + ip + " ...", "cliente", "Cliente 1");
+  ws = new WebSocket("ws://" + ip + "/ws");
+
+  ws.onopen = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Conectado";
+    estado.classList.add("conectado");
+    log("Conexión establecida", "conexion", "ESP32");
+    setBotonesConectado(true);
+    document.getElementById("btn_iniciar").disabled = false;
+    document.getElementById("btn_detener").disabled = true;
+  };
+
+  ws.onclose = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Desconectado";
+    estado.classList.remove("conectado");
+    log("Conexión cerrada", "desconexion", "ESP32");
+    setBotonesConectado(false);
+  };
+
+  ws.onerror = () => {
+    const estado = document.getElementById("estado_conexion");
+    estado.textContent = "Error de conexión";
+    estado.classList.remove("conectado");
+    log("Error de conexión", "desconexion", "ESP32");
+  };
+
+  ws.onmessage = (evt) => {
+    const msg = evt.data;
+
+    if (msg.startsWith("ESTADO:")) {
+      const activa = msg.split(":")[1] === "1";
+      setBotonesTrayectoria(activa);
+    }
+    else if (msg.startsWith("EVENTO:")) {
+      log(msg.substring(7), "esp32", "ESP32");
+    }
+    else if (msg.startsWith("PID_M1:")) {
+      const [kp, kd] = msg.substring(7).split(",");
+      document.getElementById("kp").value = parseFloat(kp).toFixed(2);
+      document.getElementById("kd").value = parseFloat(kd).toFixed(2);
+    }
+    else if (msg.startsWith("PID_M2:")) {
+      // Mismas constantes que M1 — no se muestra por separado
+    }
+    else if (msg.startsWith("PARAMS:")) {
+      const [dist, velcru, acel] = msg.substring(7).split(",");
+      document.getElementById("distancia").value = parseFloat(dist).toFixed(2);
+      document.getElementById("velcru").value = parseFloat(velcru).toFixed(2);
+      document.getElementById("acel").value = parseFloat(acel).toFixed(2);
+    }
+  };
+}
+
+function iniciarTrayectoria() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send("TOGGLE");
+  log("Iniciar trayectoria", "cliente", "Cliente 1");
+}
+
+function detenerTrayectoria() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send("TOGGLE");
+  log("Detener trayectoria", "cliente", "Cliente 1");
+}
+
+function enviarConfiguracion() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const kp = document.getElementById("kp").value;
+  const kd = document.getElementById("kd").value;
+
+  let velcru = parseFloat(document.getElementById("velcru").value);
+  if (velcru > 0.7225) {
+    velcru = 0.7225;
+    document.getElementById("velcru").value = velcru;
+  }
+  const distancia = document.getElementById("distancia").value;
+  const acel = document.getElementById("acel").value;
+
+  // Mismas constantes de control para ambos motores
+  ws.send("KP1:" + kp);
+  ws.send("KD1:" + kd);
+  ws.send("KP2:" + kp);
+  ws.send("KD2:" + kd);
+  ws.send("DIST:" + distancia);
+  ws.send("VELCRU:" + velcru);
+  ws.send("ACEL:" + acel);
+
+  log("Configuración enviada — Dist: " + distancia + " m, Vel: " + velcru +
+      " m/s, Acel: " + acel + " m/s², Kp: " + kp + ", Kd: " + kd, "cliente", "Cliente 1");
+}
+</script>
+
+</body>
+</html>
